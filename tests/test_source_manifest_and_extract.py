@@ -10,7 +10,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from ingestion.extract import extract_document, extract_html, extract_pdf
+from ingestion.extract import _pdf_document_date, extract_document, extract_html, extract_pdf
 from ingestion.fetch import FetchedSource, SourceFetchError, fetch_source
 from ingestion.manifest import ManifestError, SourceRecord, is_approved_url, load_source_manifest
 from ingestion.pipeline import ingest_sources
@@ -78,6 +78,43 @@ class HtmlExtractionTests(unittest.TestCase):
         table_block = next(block for block in section.blocks if block.kind == "table")
         self.assertEqual(table_block.rows[1], ["SIP", "100"])
 
+    def test_extracts_card_facts_as_label_value_blocks(self):
+        html = b"""<html><body><main><h1>Scheme</h1><div class='card'>
+        <p class='style__title'>Min SIP</p><p class='style__description'>INR 100</p>
+        </div></main></body></html>"""
+
+        document = extract_html(html, "https://www.hdfcfund.com/sample")
+
+        fact = next(
+            block
+            for section in document.sections
+            for block in section.blocks
+            if block.kind == "fact"
+        )
+        self.assertEqual((fact.label, fact.value), ("Min SIP", "INR 100"))
+        self.assertEqual(fact.text, "Min SIP: INR 100")
+
+    def test_extracts_faq_pairs_once_and_filters_statement_workflow_noise(self):
+        html = b"""<html><body><main><h1>Statements</h1><h2>FAQs</h2>
+        <ul><li><button><p>1. What is an account statement?</p></button>
+        <div><p>A consolidated record of transactions.</p></div></li></ul>
+        <li>Statement link - Click here</li><p>Statement link - Click here</p>
+        <p>Please enter your folio number in the box.</p>
+        <p>SMS to be sent as: account number and password.</p>
+        </main></body></html>"""
+
+        document = extract_html(html, "https://www.hdfcfund.com/sample")
+        blocks = [block for section in document.sections for block in section.blocks]
+        faqs = [block for block in blocks if block.kind == "faq"]
+        texts = [block.text for block in blocks]
+
+        self.assertEqual(len(faqs), 1)
+        self.assertEqual(faqs[0].question, "What is an account statement?")
+        self.assertEqual(faqs[0].text, "A consolidated record of transactions.")
+        self.assertEqual(texts.count("Statement link - Click here"), 1)
+        self.assertFalse(any("folio number" in text.lower() for text in texts))
+        self.assertFalse(any("SMS to be sent as" in text for text in texts))
+
     def test_dispatch_requires_html_content_type_or_pdf_signature(self):
         with self.assertRaisesRegex(ValueError, "Unsupported source content type"):
             extract_document(b"not html", "https://www.hdfcfund.com/page", "text/plain")
@@ -112,6 +149,126 @@ class PdfExtractionTests(unittest.TestCase):
         self.assertEqual(document.page_count, 1)
         self.assertEqual(document.sections[0].blocks[0].page_number, 1)
         self.assertEqual(document.sections[0].blocks[1].rows[1], ["Benchmark", "Index"])
+
+    def test_extracts_explicit_front_matter_date(self):
+        class FakePage:
+            def extract_text(self, layout=False):
+                return "Key Information Memorandum dated November 21, 2025"
+
+            def extract_tables(self):
+                return []
+
+        class FakePdf:
+            metadata = {"Title": "KIM"}
+            pages = [FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        with patch.dict(sys.modules, {"pdfplumber": types.SimpleNamespace(open=lambda _: FakePdf())}):
+            document = extract_pdf(b"%PDF-fake", "https://files.hdfcfund.com/kim.pdf")
+
+        self.assertEqual(document.document_date, "2025-11-21")
+
+    def test_prefers_document_month_to_incidental_older_full_date(self):
+        self.assertEqual(
+            _pdf_document_date(["April 12, 2018 reference. Fund Facts August 2026. AUM July 2026."]),
+            "2026-08",
+        )
+
+    def test_removes_table_region_from_page_text_and_retains_table_context(self):
+        class FakeTable:
+            bbox = (10, 20, 100, 40)
+
+            def extract(self):
+                return [["Benchmark", "Index"]]
+
+        class FakeCrop:
+            def extract_text(self):
+                return "Table caption"
+
+        class FakeFilteredPage:
+            def extract_text(self, layout=False):
+                return "Scheme facts"
+
+        class FakePage:
+            width = 200
+            chars = [
+                {"object_type": "char", "x0": 1, "x1": 5, "top": 2, "bottom": 8},
+                {"object_type": "char", "x0": 12, "x1": 18, "top": 22, "bottom": 28},
+            ]
+
+            def extract_text(self, layout=False):
+                return "Scheme facts\nBenchmark Index"
+
+            def find_tables(self):
+                return [FakeTable()]
+
+            def filter(self, predicate):
+                self.filtered_characters = [character for character in self.chars if predicate(character)]
+                return FakeFilteredPage()
+
+            def crop(self, _):
+                return FakeCrop()
+
+        class FakePdf:
+            metadata = {"Title": "Factsheet"}
+            pages = [FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        with patch.dict(sys.modules, {"pdfplumber": types.SimpleNamespace(open=lambda _: FakePdf())}):
+            document = extract_pdf(b"%PDF-fake", "https://files.hdfcfund.com/facts.pdf")
+
+        page_text, table = document.sections[0].blocks
+        self.assertEqual(page_text.text, "Scheme facts")
+        self.assertEqual(table.title, "Table caption")
+        self.assertEqual(table.rows, [["Benchmark", "Index"]])
+
+    def test_skips_irregular_tables_with_an_extraction_warning(self):
+        class FakeTable:
+            bbox = (10, 20, 100, 40)
+
+            def extract(self):
+                return [["Heading", "Value"], ["malformed row"]]
+
+        class FakePage:
+            width = 200
+
+            def extract_text(self, layout=False):
+                return "Facts"
+
+            def find_tables(self):
+                return [FakeTable()]
+
+            def filter(self, predicate):
+                return self
+
+            def crop(self, _):
+                return self
+
+        class FakePdf:
+            metadata = {}
+            pages = [FakePage()]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        with patch.dict(sys.modules, {"pdfplumber": types.SimpleNamespace(open=lambda _: FakePdf())}):
+            document = extract_pdf(b"%PDF-fake", "https://files.hdfcfund.com/facts.pdf")
+
+        self.assertEqual([block.kind for block in document.sections[0].blocks], ["page_text"])
+        self.assertIn("inconsistent row widths", document.warnings[0])
 
 
 class FetchTests(unittest.TestCase):

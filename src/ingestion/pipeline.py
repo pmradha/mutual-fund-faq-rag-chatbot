@@ -87,6 +87,7 @@ def ingest_sources(
                 "title": document.title,
                 "document_date": document.document_date,
                 "page_count": document.page_count,
+                "extraction_warnings": document.warnings,
             }
         )
         results.append(result)
