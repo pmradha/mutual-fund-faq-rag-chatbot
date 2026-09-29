@@ -158,6 +158,7 @@ env.bak/
 venv.bak/
 /data/chroma/
 /data/sources/
+/data/extracted/
 /data/manifest.json
 
 # Spyder project settings
