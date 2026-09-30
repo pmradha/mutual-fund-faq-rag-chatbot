@@ -10,4 +10,12 @@ This plan follows `PRD.md` and `architecture.md`. File paths below are proposed 
 | 4. Chat interface | Build the chat experience with the PRD welcome message, three example questions, visible facts-only notice, and backend-connected question/answer flow. | Frontend chat view/components, backend API integration | Verify initial content, example-question submission, answer/source rendering, refusal states, and that the Groq key is absent from frontend assets and network responses. |
 | 5. End-to-end acceptance | Integrate ingestion, retrieval, answer service, and interface; document local setup and run procedure. | Application entry point, integration tests, `README.md` | Run representative FAQs for all required fact types plus unsupported/advice/performance/PII cases; confirm citations point to retrieved canonical sources, answer limits hold, Chroma survives restart, and the full flow works from a clean setup. |
 
+## Phase 2B Validation Results
+
+- Indexed all 547 chunks from `data/processed/chunks.txt` with `sentence-transformers/all-MiniLM-L6-v2`; stored embeddings are 384-dimensional.
+- Persistent ChromaDB storage under `data/chroma/` was reopened and verified. Similarity retrieval returned matching minimum-SIP fact chunks.
+- Repeat indexing added 0 chunks, updated 0 metadata records, and removed 0 chunks.
+- All 25 repository tests passed.
+- Known non-failing warnings: Python 3.14/Chroma telemetry deprecation and the existing HTTP 403 resource-cleanup warning.
+
 Keep generated source snapshots, vectors, credentials, and user input out of version control as appropriate. Do not enable conversation persistence or use the reader view/Jina as a production fetch dependency without approval. If source fetch or extraction is unreliable, stop ingestion for that source rather than answering from model knowledge.
