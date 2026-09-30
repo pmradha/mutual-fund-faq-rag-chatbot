@@ -3,3 +3,5 @@ pdfplumber>=0.11,<1
 transformers>=4.40,<5
 sentence-transformers>=3.0,<6
 chromadb>=0.5,<2
+groq>=0.11,<1
+python-dotenv>=1.0,<2
