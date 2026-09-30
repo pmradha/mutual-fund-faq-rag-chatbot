@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7f4">
+    <title>HDFC Mutual Fund FAQ</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="HDFC Mutual Fund FAQ home">
+        <span class="brand__mark" aria-hidden="true">H</span>
+        <span class="brand__name">HDFC Mutual Fund <span>FAQ assistant</span></span>
+      </a>
+      <p class="notice"><span class="notice__dot" aria-hidden="true"></span>Facts-only. No investment advice.</p>
+    </header>
+
+    <main class="workspace">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">Scheme information, from approved sources</p>
+        <h1 id="page-title">Find a clear answer.</h1>
+        <p class="welcome">Welcome. Ask a factual question about HDFC Mutual Fund schemes or investor services.</p>
+      </section>
+
+      <section class="conversation" aria-label="FAQ conversation">
+        <div class="messages" id="messages" role="log" aria-live="polite" aria-relevant="additions">
+          <article class="message message--assistant">
+            <span class="message__label">Assistant</span>
+            <p class="message__text">I can help find scheme facts and investor-service information in the approved sources.</p>
+          </article>
+        </div>
+
+        <section class="examples" aria-labelledby="examples-title">
+          <h2 id="examples-title">Try a question</h2>
+          <div class="examples__list">
+            <button class="example" type="button">What is the minimum SIP amount?</button>
+            <button class="example" type="button">What is the exit load for HDFC Large Cap Fund?</button>
+            <button class="example" type="button">How can I request a capital-gains statement?</button>
+          </div>
+        </section>
+
+        <form class="composer" id="question-form">
+          <label class="visually-hidden" for="question">Your question</label>
+          <input id="question" name="question" type="text" maxlength="1000" autocomplete="off" placeholder="Ask a factual question" required>
+          <button class="send-button" id="send-button" type="submit">Send <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        <p class="status" id="status" role="status" aria-live="polite"></p>
+      </section>
+
+      <footer class="footer">
+        <span>Information is limited to retrieved approved sources.</span>
+        <span>Never enter PAN, Aadhaar, account numbers, OTPs, email, or phone numbers.</span>
+      </footer>
+    </main>
+  </body>
+</html>
