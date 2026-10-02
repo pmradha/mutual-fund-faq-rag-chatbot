@@ -1,0 +1,5 @@
+{
+  "name": "HDFC Mutual Fund FAQ Assistant",
+  "forwardPorts": [8000, 8001],
+  "postStartCommand": "bash .devcontainer/start-servers.sh"
+}

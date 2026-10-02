@@ -87,7 +87,7 @@ class AnswerService:
         embedder: Any | None = None,
         persist_directory: str | Path = PERSIST_DIRECTORY,
         model: str = GROQ_MODEL,
-        relevance_limit: int = 5,
+        relevance_limit: int = 10,
     ):
         self._persist_directory = persist_directory
         self._model = model

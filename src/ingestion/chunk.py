@@ -388,6 +388,27 @@ def chunk_documents(
             ]
             if any(_PERFORMANCE_CONTEXT.search(part) for part in base_path):
                 continue
+            if base_path and base_path[-1].casefold() == "exit load":
+                rule_parts = []
+                for block in section.get("blocks", []):
+                    label = _normalize_text(block.get("label") or "")
+                    value = _normalize_text(block.get("value") or "")
+                    text = _normalize_text(block.get("text") or "")
+                    if label.casefold() == "exit load" and value:
+                        rule_parts.append(value)
+                    elif text:
+                        rule_parts.append(text)
+                if rule_parts:
+                    rule = " ".join(rule_parts)
+                    exit_load_text = _with_scheme_context(
+                        f"Exit Load: {rule}", str(source["scheme_or_scope"])
+                    )
+                    if _token_count(tokenizer, exit_load_text) > max_tokens:
+                        raise ChunkingError(
+                            f"Exit load rule in source {source_id} exceeds the chunk limit"
+                        )
+                    append_chunk(exit_load_text, base_path, None)
+                continue
             prose: list[str] = []
             prose_page: int | None = None
             pending_return_value = False
@@ -495,14 +516,19 @@ def chunk_documents(
 
                 flush_prose()
                 if kind == "fact":
-                    fact_text = text or ": ".join(
-                        part
-                        for part in (
-                            _normalize_text(block.get("label") or ""),
-                            _normalize_text(block.get("value") or ""),
-                        )
-                        if part
+                    fact_label = _normalize_text(block.get("label") or "")
+                    fact_value = _normalize_text(block.get("value") or "")
+                    if fact_label.casefold() in {"ter", "total expense ratio"}:
+                        fact_label = "Total Expense Ratio"
+                    fact_text = (
+                        f"{fact_label}: {fact_value}"
+                        if fact_label and fact_value
+                        else text
                     )
+                    if not fact_text:
+                        fact_text = ": ".join(
+                            part for part in (fact_label, fact_value) if part
+                        )
                     if fact_text:
                         fact_text = _with_scheme_context(
                             fact_text, str(source["scheme_or_scope"])

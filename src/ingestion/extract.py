@@ -163,6 +163,19 @@ def extract_html(payload: bytes, source_url: str) -> ExtractedDocument:
     fact_blocks: dict[int, ContentBlock] = {}
     fact_value_ids: set[int] = set()
     for label_node in content.find_all(["p", "div", "dt"]):
+        if label_node.name == "div" and _class_has_suffix(label_node, "exitload"):
+            label = "Exit Load"
+            value = _clean_text(label_node.get_text(" ", strip=True))
+            value = re.sub(r"^Exit Load\s*", "", value, flags=re.IGNORECASE)
+            if value and not _sensitive_workflow_text(value):
+                fact_blocks[id(label_node)] = ContentBlock(
+                    kind="fact", text=f"{label}: {value}", label=label, value=value
+                )
+                fact_value_ids.update(
+                    id(descendant)
+                    for descendant in label_node.find_all(["p", "li", "dt", "dd"])
+                )
+            continue
         if label_node.name == "dt":
             value_node = label_node.find_next_sibling("dd")
         elif _class_has_suffix(label_node, "title"):
@@ -216,12 +229,20 @@ def extract_html(payload: bytes, source_url: str) -> ExtractedDocument:
             current_section.blocks.append(block)
             seen_blocks.add(key)
 
-    block_names = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "table", "dt", "dd"}
+    block_names = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "table", "dt", "dd", "div"}
     for element in content.find_all(
         lambda candidate: candidate.name in block_names or candidate.get("role") == "heading"
     ):
         if any(id(parent) in faq_roots for parent in element.parents):
             continue
+        if element.name == "div":
+            fact = fact_blocks.get(id(element))
+            if not fact or (fact.label or "").casefold() not in {
+                "ter",
+                "riskometer",
+                "exit load",
+            }:
+                continue
         if id(element) in faq_roots:
             add_block(faq_blocks[id(element)])
             continue

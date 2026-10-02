@@ -92,6 +92,7 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertIn("Minimum SIP: INR 100.", sent_context)
         self.assertEqual(self.client.completions.calls[0]["model"], "qwen/qwen3.8-27b")
         self.assertEqual(len(self.retriever.calls), 1)
+        self.assertEqual(self.retriever.calls[0][1]["n_results"], 10)
 
     def test_generation_uses_one_source_group_and_cites_the_supporting_group(self):
         matches = [

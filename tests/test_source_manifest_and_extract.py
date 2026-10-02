@@ -94,6 +94,37 @@ class HtmlExtractionTests(unittest.TestCase):
         self.assertEqual((fact.label, fact.value), ("Min SIP", "INR 100"))
         self.assertEqual(fact.text, "Min SIP: INR 100")
 
+    def test_extracts_related_ter_riskometer_and_exit_load_facts(self):
+        html = b"""<html><body><main><h1>Scheme</h1>
+        <div class='style__mainvalue'><div class='style__title'>Riskometer</div>
+        <p class='style__description'>Very High</p></div>
+        <div class='style__width33'><div class='style__title'>TER</div>
+        <p class='style__description'>1.57</p></div>
+        <h2>Exit Load</h2><div class='style__exitload'>Exit Load
+        <p>One percent within one year.</p></div>
+        <p>Very High</p></main></body></html>"""
+
+        document = extract_html(html, "https://www.hdfcfund.com/sample")
+        facts = [
+            block
+            for section in document.sections
+            for block in section.blocks
+            if block.kind == "fact"
+        ]
+
+        fact_values = [(fact.label, fact.value) for fact in facts]
+        self.assertIn(("Riskometer", "Very High"), fact_values)
+        self.assertIn(("TER", "1.57"), fact_values)
+        exit_load = next(fact for fact in facts if fact.label == "Exit Load")
+        self.assertEqual(exit_load.value, "One percent within one year.")
+        unassociated_risk_text = [
+            block.text
+            for section in document.sections
+            for block in section.blocks
+            if block.kind != "fact" and block.text == "Very High"
+        ]
+        self.assertEqual(unassociated_risk_text, ["Very High"])
+
     def test_extracts_faq_pairs_once_and_filters_statement_workflow_noise(self):
         html = b"""<html><body><main><h1>Statements</h1><h2>FAQs</h2>
         <ul><li><button><p>1. What is an account statement?</p></button>

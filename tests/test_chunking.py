@@ -197,6 +197,56 @@ class ChunkingTests(unittest.TestCase):
         self.assertEqual(chunks[0].text, "Sample Fund - Min SIP: INR 100")
         self.assertLessEqual(chunks[0].metadata["token_count"], 220)
 
+    def test_ter_riskometer_and_exit_load_chunks_are_self_contained(self):
+        exit_rule = "One percent is payable within one year. No load after one year."
+        self.write_source(
+            [
+                {
+                    "section_path": ["About Sample Fund"],
+                    "blocks": [
+                        {
+                            "kind": "fact",
+                            "text": "TER: 1.57",
+                            "label": "TER",
+                            "value": "1.57",
+                        },
+                        {
+                            "kind": "fact",
+                            "text": "Riskometer: Very High",
+                            "label": "Riskometer",
+                            "value": "Very High",
+                        },
+                        {"kind": "paragraph", "text": "Very High"},
+                    ],
+                },
+                {
+                    "section_path": ["Sample Fund", "Exit Load"],
+                    "blocks": [
+                        {
+                            "kind": "fact",
+                            "text": f"Exit Load: {exit_rule}",
+                            "label": "Exit Load",
+                            "value": exit_rule,
+                        }
+                    ],
+                },
+            ]
+        )
+
+        chunks = chunk_documents(
+            self.manifest_path,
+            self.extracted_dir,
+            tokenizer=WhitespaceTokenizer(),
+        )
+        texts = [chunk.text for chunk in chunks]
+
+        self.assertIn("Sample Fund - Total Expense Ratio: 1.57", texts)
+        self.assertIn("Sample Fund - Riskometer: Very High", texts)
+        self.assertIn(f"Sample Fund - Exit Load: {exit_rule}", texts)
+        self.assertIn("Very High", texts)
+        self.assertNotIn("Sample Fund - Very High", texts)
+        self.assertTrue(all(chunk.metadata["token_count"] <= 220 for chunk in chunks))
+
     def test_manifest_failures_and_source_url_mismatches_are_rejected(self):
         self.write_source(
             [
