@@ -130,7 +130,10 @@ class ChunkingTests(unittest.TestCase):
             overlap_tokens=4,
         )
 
-        fact = next(chunk for chunk in chunks if chunk.text == "Minimum SIP: INR 100")
+        fact = next(
+            chunk for chunk in chunks if "Minimum SIP: INR 100" in chunk.text
+        )
+        self.assertEqual(fact.text, "Sample Fund - Minimum SIP: INR 100")
         self.assertEqual(fact.metadata["source_url"], "https://files.hdfcfund.com/source.pdf")
         self.assertEqual(fact.metadata["source_title"], "Sample KIM")
         self.assertEqual(fact.metadata["source_type"], "KIM")
@@ -170,6 +173,29 @@ class ChunkingTests(unittest.TestCase):
                 line for line in chunk.text.splitlines() if line.startswith("Company")
             )
         self.assertEqual(seen_rows, [f"Company{i} | Industry{i}" for i in range(8)])
+
+    def test_standalone_sip_label_value_paragraphs_get_scheme_context(self):
+        self.write_source(
+            [
+                {
+                    "section_path": ["About Sample Fund"],
+                    "blocks": [
+                        {"kind": "paragraph", "text": "Min SIP"},
+                        {"kind": "paragraph", "text": "INR 100"},
+                    ],
+                }
+            ]
+        )
+
+        chunks = chunk_documents(
+            self.manifest_path,
+            self.extracted_dir,
+            tokenizer=WhitespaceTokenizer(),
+        )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].text, "Sample Fund - Min SIP: INR 100")
+        self.assertLessEqual(chunks[0].metadata["token_count"], 220)
 
     def test_manifest_failures_and_source_url_mismatches_are_rejected(self):
         self.write_source(

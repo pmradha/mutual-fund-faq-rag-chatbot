@@ -21,6 +21,11 @@ _PERFORMANCE_CONTEXT = re.compile(
 )
 _RETURNS_LABEL = re.compile(r"^(?:scheme\s+)?returns?\s*:?$", re.IGNORECASE)
 _RETURN_VALUE = re.compile(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*%$")
+_SIP_MINIMUM_LABEL = re.compile(r"^min(?:imum)?\s+sip$", re.IGNORECASE)
+_SIP_MINIMUM_VALUE = re.compile(
+    r"^(?:\u20b9\s*|INR\s*|Rs\.?\s*)?\d[\d,]*(?:\.\d+)?(?:\s*/-)?$",
+    re.IGNORECASE,
+)
 
 
 class ChunkingError(ValueError):
@@ -48,6 +53,12 @@ def load_tokenizer() -> Any:
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _with_scheme_context(text: str, scheme_or_scope: str) -> str:
+    if scheme_or_scope.casefold() in text.casefold():
+        return text
+    return f"{scheme_or_scope} - {text}"
 
 
 def _encode(tokenizer: Any, text: str) -> list[int]:
@@ -394,7 +405,11 @@ def chunk_documents(
                 prose = []
                 prose_page = None
 
-            for block in section.get("blocks", []):
+            blocks = section.get("blocks", [])
+            consumed_fact_values: set[int] = set()
+            for block_index, block in enumerate(blocks):
+                if block_index in consumed_fact_values:
+                    continue
                 kind = block.get("kind", "paragraph")
                 page_number = block.get("page_number")
                 text = _normalize_text(block.get("text") or "")
@@ -447,6 +462,26 @@ def chunk_documents(
                     pending_return_value = True
                     continue
 
+                if (
+                    kind in {"paragraph", "list_item", "page_text"}
+                    and _SIP_MINIMUM_LABEL.fullmatch(text)
+                    and block_index + 1 < len(blocks)
+                ):
+                    value_block = blocks[block_index + 1]
+                    value_text = _normalize_text(value_block.get("text") or "")
+                    if (
+                        value_block.get("kind", "paragraph")
+                        in {"paragraph", "list_item", "page_text"}
+                        and _SIP_MINIMUM_VALUE.fullmatch(value_text)
+                    ):
+                        flush_prose()
+                        fact_text = _with_scheme_context(
+                            f"{text}: {value_text}", str(source["scheme_or_scope"])
+                        )
+                        append_chunk(fact_text, base_path, page_number)
+                        consumed_fact_values.add(block_index + 1)
+                        continue
+
                 if kind in {"paragraph", "list_item", "page_text"} or (
                     kind not in {"fact", "faq", "table"} and text
                 ):
@@ -469,6 +504,9 @@ def chunk_documents(
                         if part
                     )
                     if fact_text:
+                        fact_text = _with_scheme_context(
+                            fact_text, str(source["scheme_or_scope"])
+                        )
                         if _token_count(tokenizer, fact_text) > max_tokens:
                             raise ChunkingError(
                                 f"Fact in source {source_id} exceeds the chunk limit"

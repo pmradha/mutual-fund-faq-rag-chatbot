@@ -18,7 +18,7 @@ from ingestion.manifest import is_approved_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "qwen/qwen3.8-27b"
 MAX_ANSWER_SENTENCES = 2
 NOT_FOUND_RESPONSE = "I couldn't find information about that in the approved sources."
 PII_REFUSAL = (
