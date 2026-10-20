@@ -1,4 +1,6 @@
 beautifulsoup4>=4.12,<5
+google-play-scraper>=1.2,<2
+pandas>=2.2,<4
 pdfplumber>=0.11,<1
 transformers>=4.40,<5
 sentence-transformers>=3.0,<6
