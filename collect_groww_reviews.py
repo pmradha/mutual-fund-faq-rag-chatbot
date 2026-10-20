@@ -199,15 +199,30 @@ def main():
     print(f"Reviews in target window: {len(filtered_df)}")
     print(f"Requested window: {START_DATE} to {END_DATE}")
 
-    if filtered_df.empty:
-        print("Actual date range: none")
+    # The filtered frame cannot show whether collection walked back to
+    # the start boundary: every row is already on or after START_DATE.
+    if valid_df.empty:
+        print("Raw earliest date: none")
+        print("Raw latest date: none")
         start_reached = False
+    else:
+        raw_start = valid_df["review_date"].min()
+        raw_end = valid_df["review_date"].max()
+        print(f"Raw earliest date: {raw_start}")
+        print(f"Raw latest date: {raw_end}")
+        start_reached = raw_start <= START_DATE
+
+    if filtered_df.empty:
+        print("Filtered earliest date: none")
+        print("Filtered latest date: none")
+        window_has_reviews = False
         recent_enough = False
     else:
-        actual_start = filtered_df["review_date"].min()
-        actual_end = filtered_df["review_date"].max()
+        filtered_start = filtered_df["review_date"].min()
+        filtered_end = filtered_df["review_date"].max()
 
-        print(f"Actual date range: {actual_start} to {actual_end}")
+        print(f"Filtered earliest date: {filtered_start}")
+        print(f"Filtered latest date: {filtered_end}")
         print(
             "Reviews with text <= 5 characters: "
             f"{filtered_df['short_text_flag'].sum()}"
@@ -217,15 +232,20 @@ def main():
             f"{filtered_df['missing_text_flag'].sum()}"
         )
 
-        start_reached = actual_start <= START_DATE
-        recent_enough = actual_end >= END_DATE - timedelta(days=7)
+        window_has_reviews = (
+            filtered_start >= START_DATE and filtered_end <= END_DATE
+        )
+        recent_enough = filtered_end >= END_DATE - timedelta(days=7)
+
+    print(f"Start boundary reached in raw data: {start_reached}")
+    print(f"Filtered window contains reviews: {window_has_reviews}")
 
     zero_weeks = int((weekly_report["review_count"] == 0).sum())
     print(f"Weeks with zero reviews: {zero_weeks}")
     print("\nWeekly counts:")
     print(weekly_report.to_string(index=False))
 
-    if start_reached and recent_enough and not filtered_df.empty:
+    if start_reached and recent_enough and window_has_reviews:
         print(
             "\nDATE-BOUNDARY CHECK: PASS. "
             "Inspect weekly counts before claiming representativeness."
