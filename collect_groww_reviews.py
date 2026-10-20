@@ -1,7 +1,7 @@
 """
 Groww Google Play reviews collector for M5.
 
-Install dependencies separately when ready:
+Dependencies, also listed in requirements.txt:
     pip install google-play-scraper pandas
 
 Outputs:
@@ -11,6 +11,22 @@ Outputs:
 
 The script cannot guarantee that Google Play returns the full history.
 Inspect the coverage report before using the dataset.
+
+google-play-scraper reviews() accepts sort, count, score, device, and a
+continuation token. It has no request date filter, so the configured
+window cannot be collected as separate date-bounded queries. Pagination
+uses one newest-first continuation chain so review IDs are deduplicated
+across pages. Each continuation page is assumed to be older than the
+previous page. Further requests stop when a page has crossed the start
+date: at least two reviews on that page are on or before the start, or
+the whole page is. One older review in an otherwise newer page is not
+the start boundary and is not proof that the full period was traversed.
+The review cap is a runaway guard sized from the configured window, not
+a 10,000-review sample. A date span is not a complete collection of
+every eligible review.
+
+Calendar dates use Asia/Kolkata. Weekly coverage buckets are
+Monday–Sunday and can include partial weeks at both ends of the window.
 """
 
 from datetime import date, timedelta
@@ -31,13 +47,27 @@ END_DATE = date(2026, 10, 20)
 START_DATE = END_DATE - timedelta(weeks=WEEKS)
 
 BATCH_SIZE = 200
-MAX_REVIEWS = 10_000
+# reviews() cannot filter by date. A fixed 10,000-review cap stopped
+# pagination before this window's start date. The cap scales with the
+# configured inclusive window and only stops a runaway fetch.
+MAX_REVIEWS_PER_DAY = 1_000
+WINDOW_DAYS = (END_DATE - START_DATE).days + 1
+MAX_REVIEWS = WINDOW_DAYS * MAX_REVIEWS_PER_DAY
 PAUSE_SECONDS = 1
 
 OUTPUT_DIR = Path("data")
 RAW_FILE = OUTPUT_DIR / "groww_reviews_raw.csv"
 FILTERED_FILE = OUTPUT_DIR / f"groww_reviews_{WEEKS}_weeks.csv"
 WEEKLY_FILE = OUTPUT_DIR / "groww_weekly_coverage.csv"
+LOCAL_TIMEZONE = "Asia/Kolkata"
+
+
+def to_kolkata_timestamps(values):
+    """Parse timestamps as UTC and convert them to Asia/Kolkata."""
+    timestamps = pd.to_datetime(
+        pd.Series(values), errors="coerce", utc=True
+    )
+    return timestamps.dt.tz_convert(LOCAL_TIMEZONE)
 
 
 def main():
@@ -46,13 +76,19 @@ def main():
     all_reviews = []
     seen_ids = set()
     continuation_token = None
+    fetched_count = 0
+    stop_reason = None
 
     print(f"App: {APP_ID}")
     print(f"Requested period: {START_DATE} to {END_DATE}")
+    print(
+        f"Safety cap: {MAX_REVIEWS} reviews "
+        f"({WINDOW_DAYS} days x {MAX_REVIEWS_PER_DAY} per day)"
+    )
     print("Starting collection...")
 
     # 2. Fetch reviews in batches
-    while len(all_reviews) < MAX_REVIEWS:
+    while True:
         try:
             batch, next_token = reviews(
                 APP_ID,
@@ -63,52 +99,93 @@ def main():
                 continuation_token=continuation_token,
             )
         except Exception as exc:
-            print(f"Collection stopped due to an error: {exc}")
+            stop_reason = "error"
+            print(f"Collection stopped due to an error while fetching reviews: {exc}")
             print("Saving reviews collected so far, if any.")
             break
 
         if not batch:
+            stop_reason = "no_more_pages"
             print("No more reviews returned.")
             break
 
-        new_count = 0
-        for review in batch:
-            review_id = review.get("reviewId")
+        reached_start = False
+        try:
+            for review in batch:
+                review_id = review.get("reviewId")
 
-            if review_id and review_id in seen_ids:
-                continue
+                if review_id and review_id in seen_ids:
+                    continue
 
-            if review_id:
-                seen_ids.add(review_id)
+                if review_id:
+                    seen_ids.add(review_id)
 
-            all_reviews.append(review)
-            new_count += 1
+                all_reviews.append(review)
 
-        batch_dates = pd.to_datetime(
-            [item.get("at") for item in batch],
-            errors="coerce",
-            utc=True,
-        ).dropna()
+            fetched_count += len(batch)
 
-        if not batch_dates.empty:
-            oldest = batch_dates.min().date()
-            newest = batch_dates.max().date()
+            batch_dates = to_kolkata_timestamps(
+                [item.get("at") for item in batch]
+            ).dropna()
+
+            if not batch_dates.empty:
+                oldest = batch_dates.min().date()
+                newest = batch_dates.max().date()
+                print(
+                    f"Fetched {len(all_reviews)} reviews; "
+                    f"batch dates: {oldest} to {newest}"
+                )
+
+                # Newest-first assumption: Sort.NEWEST returns this page from
+                # newest to oldest, and the next page is older still. The
+                # earliest Asia/Kolkata date is the furthest point this page
+                # reached. Stop only when the page has crossed START_DATE,
+                # which means the whole page is on or before that date or
+                # at least two reviews are. One older review among newer
+                # ones can be out of order, so it does not end pagination
+                # and does not prove the full period was traversed.
+                # Stopping only ends further requests.
+                on_or_before_start = sum(
+                    day <= START_DATE for day in batch_dates.dt.date
+                )
+                if newest <= START_DATE or on_or_before_start >= 2:
+                    reached_start = True
+                elif on_or_before_start == 1:
+                    print(
+                        "One review is on or before the start date; "
+                        "continuing because that review alone is not the "
+                        "newest-first start boundary."
+                    )
+        except Exception as exc:
+            stop_reason = "error"
             print(
-                f"Fetched {len(all_reviews)} reviews; "
-                f"batch dates: {oldest} to {newest}"
+                "Collection stopped due to an error while processing a batch: "
+                f"{exc}"
             )
+            print("Saving reviews collected so far, if any.")
+            break
 
-            # Reviews are requested newest-first.
-            if oldest <= START_DATE:
-                print("Reached the requested start date.")
-                break
+        if reached_start:
+            stop_reason = "start_date"
+            print(
+                "Reached the requested start boundary under the "
+                "newest-first page order. Further requests are stopping. "
+                "This does not mean every eligible review was collected."
+            )
+            break
 
         if next_token is None:
+            stop_reason = "no_more_pages"
             print("No continuation token returned.")
             break
 
-        if new_count == 0:
-            print("No new unique reviews returned; stopping.")
+        if len(all_reviews) >= MAX_REVIEWS or fetched_count >= MAX_REVIEWS:
+            stop_reason = "safety_cap"
+            print(
+                f"Safety cap reached: {MAX_REVIEWS} reviews. "
+                f"Collected {len(all_reviews)} unique reviews "
+                f"from {fetched_count} returned reviews. Stopping collection."
+            )
             break
 
         continuation_token = next_token
@@ -126,9 +203,7 @@ def main():
     if "at" not in raw_df.columns:
         raise RuntimeError("The returned data has no date column.")
 
-    raw_df["at"] = pd.to_datetime(
-        raw_df["at"], errors="coerce", utc=True
-    )
+    raw_df["at"] = to_kolkata_timestamps(raw_df["at"])
     raw_df.to_csv(RAW_FILE, index=False)
 
     # 4. Validate expected fields
@@ -163,7 +238,9 @@ def main():
 
     filtered_df.to_csv(FILTERED_FILE, index=False)
 
-    # 6. Build a weekly coverage report, including zero-count weeks
+    # 6. Build a weekly coverage report, including zero-count weeks.
+    # Buckets are Monday–Sunday (pandas W-SUN). The first and last
+    # buckets can be partial weeks at the edges of the requested window.
     filtered_df["week_start"] = (
         pd.to_datetime(filtered_df["review_date"])
         .dt.to_period("W-SUN")
@@ -199,24 +276,21 @@ def main():
     print(f"Reviews in target window: {len(filtered_df)}")
     print(f"Requested window: {START_DATE} to {END_DATE}")
 
-    # The filtered frame cannot show whether collection walked back to
-    # the start boundary: every row is already on or after START_DATE.
     if valid_df.empty:
         print("Raw earliest date: none")
         print("Raw latest date: none")
-        start_reached = False
+        raw_start = None
+        raw_end = None
     else:
         raw_start = valid_df["review_date"].min()
         raw_end = valid_df["review_date"].max()
         print(f"Raw earliest date: {raw_start}")
         print(f"Raw latest date: {raw_end}")
-        start_reached = raw_start <= START_DATE
 
     if filtered_df.empty:
         print("Filtered earliest date: none")
         print("Filtered latest date: none")
-        window_has_reviews = False
-        recent_enough = False
+        filtered_end = None
     else:
         filtered_start = filtered_df["review_date"].min()
         filtered_end = filtered_df["review_date"].max()
@@ -232,28 +306,69 @@ def main():
             f"{filtered_df['missing_text_flag'].sum()}"
         )
 
-        window_has_reviews = (
-            filtered_start >= START_DATE and filtered_end <= END_DATE
-        )
-        recent_enough = filtered_end >= END_DATE - timedelta(days=7)
+    raw_reaches_start = raw_start is not None and raw_start <= START_DATE
+    filtered_on_end_date = (
+        filtered_end is not None and filtered_end >= END_DATE
+    )
+    filtered_within_seven_days = (
+        filtered_end is not None
+        and filtered_end >= END_DATE - timedelta(days=7)
+    )
+    # An error or the safety cap did not finish the newest-first walk.
+    # Stored dates from that partial run must not count as reaching
+    # the start boundary or as full-period coverage.
+    collection_reached_start = (
+        stop_reason == "start_date"
+        or (stop_reason == "no_more_pages" and raw_reaches_start)
+    )
+    reviews_in_window = not filtered_df.empty
+    spans_full_period = (
+        stop_reason not in ("error", "safety_cap")
+        and collection_reached_start
+        and filtered_within_seven_days
+    )
 
-    print(f"Start boundary reached in raw data: {start_reached}")
-    print(f"Filtered window contains reviews: {window_has_reviews}")
+    print(
+        "Collection reached the requested start boundary: "
+        f"{collection_reached_start}"
+    )
+    print(f"Reviews exist inside the requested window: {reviews_in_window}")
+    print(
+        "Latest filtered review is within seven days of the requested "
+        f"end date: {filtered_within_seven_days}"
+    )
+    print(
+        "Latest filtered review is on the requested end date: "
+        f"{filtered_on_end_date}"
+    )
+    print(
+        "Retrieved data spans the full requested period: "
+        f"{spans_full_period}"
+    )
 
     zero_weeks = int((weekly_report["review_count"] == 0).sum())
     print(f"Weeks with zero reviews: {zero_weeks}")
+    print(
+        "Weekly buckets are Monday–Sunday and can include partial weeks "
+        "at the start and end of the requested window."
+    )
     print("\nWeekly counts:")
     print(weekly_report.to_string(index=False))
 
-    if start_reached and recent_enough and window_has_reviews:
+    if spans_full_period:
         print(
-            "\nDATE-BOUNDARY CHECK: PASS. "
-            "Inspect weekly counts before claiming representativeness."
+            "\nThe retrieved dates span the requested period: collection "
+            "reached the start boundary, and the latest filtered review "
+            "is within seven days of the end date. This does not mean "
+            "every eligible review was collected. Use the weekly counts, "
+            "including weeks with zero reviews, before treating the "
+            "dataset as representative."
         )
     else:
         print(
-            "\nDATE-BOUNDARY CHECK: FAIL. "
-            "The data may not cover the full requested period."
+            "\nThe retrieved data does not span the full requested period. "
+            "The dataset is not fully covered, and this is not a complete "
+            "collection of every eligible review."
         )
 
     print("\nSaved files:")
