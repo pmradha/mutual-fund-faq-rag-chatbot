@@ -7,6 +7,7 @@ A prototype facts-only assistant for factual questions about the five HDFC Mutua
 - **Source List:** [source_corpus.csv](source_corpus.csv)
 - **Sample Q&A:** [sample_qa.md](sample_qa.md)
 - **Disclaimer:** Facts from approved sources only. This prototype does not provide investment advice, recommendations, predictions, or performance comparisons.
+- **Demo Video URL:** https://www.dropbox.com/scl/fi/av13qud43xt20jn6dofcz/mutual-fund-faq-rag-chatbot-radha.mp4?rlkey=1v6y1qygs27lzxzhawps7mnde&st=4j7zfpza&dl=0
 
 ## Run locally
 
